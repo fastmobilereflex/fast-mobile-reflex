@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+<title>Fast Mobile Reflex - Efektli Versiyon</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Roboto+Mono&display=swap');
+  html, body {
+    margin:0; padding:0; height:100%;
+    background:#121212;
+    color:#e0e0e0;
+    font-family: 'Roboto Mono', monospace;
+    display:flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    overflow: hidden;
+  }
+  header {
+    margin: 15px 0 10px 0;
+    font-size: 1.5rem;
+    font-weight: 700;
+    user-select: none;
+  }
+  #scoreboard {
+    font-size: 1.4rem;
+    margin-bottom: 10px;
+    user-select:none;
+    text-shadow: 0 0 8px #2979ffaa;
+  }
+  #game-area {
+    position: relative;
+    width: 95vw;
+    max-width: 480px;
+    aspect-ratio: 1 / 1;
+    background: linear-gradient(135deg, #0a0a0a, #121212);
+    border-radius: 12px;
+    box-shadow: 0 0 20px #2979ffbb inset;
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    grid-template-rows: repeat(5, 1fr);
+    gap: 8px;
+    touch-action: manipulation;
+    overflow: visible;
+  }
+  .target {
+    background: radial-gradient(circle at center, #2979ff, #003db8);
+    border-radius: 50%;
+    box-shadow: 0 0 15px #4d8cffcc, 0 0 30px #2965ffbb inset;
+    cursor: pointer;
+    transition:
+      transform 0.15s ease,
+      box-shadow 0.15s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    overflow: visible;
+  }
+  .target:active {
+    transform: scale(1.2);
+    box-shadow: 0 0 40px #82b1ffcc;
+  }
+  /* Parçalanma animasyonu */
+  @keyframes shatter {
+    0% {
+      opacity: 1;
+      transform: translate(0,0) scale(1);
+    }
+    100% {
+      opacity: 0;
+      transform: translate(var(--x,0), var(--y,0)) scale(0);
+    }
+  }
+  .shatter-piece {
+    position: absolute;
+    background: #4a8cff;
+    border-radius: 20%;
+    filter: drop-shadow(0 0 3px #55a0ffcc);
+    opacity: 1;
+    animation: shatter 0.5s forwards;
+    pointer-events: none;
+  }
+  #game-over-screen {
+    position: absolute;
+    inset: 0;
+    background: rgba(18,18,18,0.95);
+    color: #e0e0e0;
+    font-size: 2rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    border-radius: 12px;
+    z-index: 100;
+    user-select:none;
+  }
+  #game-over-screen button {
+    margin-top: 20px;
+    padding: 10px 25px;
+    font-size: 1.3rem;
+    background:#2979ff;
+    border-radius: 10px;
+    border:none;
+    cursor: pointer;
+  }
+  footer {
+    margin-top: 15px;
+    font-size: 0.8rem;
+    color: #555;
+    user-select:none;
+  }
+</style>
+</head>
+<body>
+
+<header>Fast Mobile Reflex - Efektli Versiyon</header>
+
+<div id="scoreboard">Skor: 0</div>
+
+<div id="game-area" role="grid" aria-label="Oyun alanı"></div>
+
+<div id="game-over-screen" style="display:none;">
+  <div>Oyun Bitti!<br>Skorunuz: <span id="final-score">0</span></div>
+  <button id="restart-btn">Tekrar Oyna</button>
+</div>
+
+<footer>© 2025 Fast Mobile Reflex</footer>
+
+<script>
+(() => {
+  const gameArea = document.getElementById('game-area');
+  const scoreBoard = document.getElementById('scoreboard');
+  const gameOverScreen = document.getElementById('game-over-screen');
+  const finalScoreElem = document.getElementById('final-score');
+  const restartBtn = document.getElementById('restart-btn');
+
+  // Sesler
+  const musicAudio = new Audio('ceza.mp3');
+  musicAudio.loop = true;
+  musicAudio.volume = 0.3;
+
+  const clickSound = new Audio('bubble.mp3');
+
+  // Sabit BPM
+  const currentBPM = 144;
+  const intervalMs = 60000 / currentBPM; // ~416ms
+
+  let intervalId = null;
+  let activeTargetIndex = null;
+  let score = 0;
+  let gameRunning = false;
+  const targetsCount = 25; // 5x5 grid
+
+  function createGrid() {
+    gameArea.innerHTML = '';
+    for (let i = 0; i < targetsCount; i++) {
+      const cell = document.createElement('div');
+      cell.classList.add('grid-cell');
+      cell.dataset.index = i;
+      cell.style.position = 'relative';
+      gameArea.appendChild(cell);
+    }
+  }
+
+  // Parçalanma efektini oluştur
+  function createShatterEffect(target) {
+    const piecesCount = 6; // küçük parça sayısı
+    const rect = target.getBoundingClientRect();
+    const size = rect.width / 3;
+
+    for(let i = 0; i < piecesCount; i++) {
+      const piece = document.createElement('div');
+      piece.classList.add('shatter-piece');
+      piece.style.width = size + 'px';
+      piece.style.height = size + 'px';
+
+      // Rastgele yönlendirme (x,y)
+      const x = (Math.random() - 0.5) * 100;
+      const y = (Math.random() - 0.5) * 100;
+
+      piece.style.setProperty('--x', `${x}px`);
+      piece.style.setProperty('--y', `${y}px`);
+
+      // Parçayı hedef üzerine yerleştir
+      piece.style.left = `${target.offsetLeft + size * (i % 3)}px`;
+      piece.style.top = `${target.offsetTop + size * Math.floor(i / 3)}px`;
+
+      gameArea.appendChild(piece);
+
+      // 500ms sonra temizle
+      setTimeout(() => {
+        piece.remove();
+      }, 600);
+    }
+  }
+
+  function showTarget() {
+    if (activeTargetIndex !== null) {
+      // Hedef kaçırıldı
+      endGame();
+      return;
+    }
+    const cells = gameArea.children;
+    const randIndex = Math.floor(Math.random() * targetsCount);
+    const cell = cells[randIndex];
+
+    const target = document.createElement('div');
+    target.classList.add('target');
+    target.setAttribute('role', 'button');
+    target.setAttribute('tabindex', '0');
+    target.setAttribute('aria-label', 'Hedef');
+    target.dataset.index = randIndex;
+
+    cell.appendChild(target);
+    activeTargetIndex = randIndex;
+
+    target.addEventListener('touchstart', onTargetHit, { passive: true });
+    target.addEventListener('mousedown', onTargetHit);
+
+    setTimeout(() => {
+      if (activeTargetIndex !== null && activeTargetIndex === randIndex) {
+        endGame();
+      }
+    }, 400);
+  }
+
+  function onTargetHit(e) {
+    e.preventDefault();
+    if (!gameRunning) return;
+
+    clickSound.currentTime = 0;
+    clickSound.play();
+
+    const target = e.currentTarget;
+
+    // Parçalanma efekti
+    createShatterEffect(target);
+
+    score++;
+    updateScore();
+
+    activeTargetIndex = null;
+    target.remove();
+  }
+
+  function updateScore() {
+    scoreBoard.textContent = `Skor: ${score}`;
+  }
+
+  function endGame() {
+    gameRunning = false;
+    clearInterval(intervalId);
+    activeTargetIndex = null;
+    const oldTarget = gameArea.querySelector('.target');
+    if (oldTarget) oldTarget.remove();
+
+    musicAudio.pause();
+    musicAudio.currentTime = 0;
+
+    finalScoreElem.textContent = score;
+    gameOverScreen.style.display = 'flex';
+  }
+
+  function onMissClick(e) {
+    if (!gameRunning) return;
+    if (e.target.classList.contains('target')) return;
+
+    endGame();
+  }
+
+  function startGame() {
+    score = 0;
+    updateScore();
+    gameOverScreen.style.display = 'none';
+
+    musicAudio.play();
+
+    gameRunning = true;
+    activeTargetIndex = null;
+    intervalId = setInterval(showTarget, intervalMs);
+  }
+
+  restartBtn.addEventListener('click', startGame);
+  gameArea.addEventListener('touchstart', onMissClick);
+  gameArea.addEventListener('mousedown', onMissClick);
+
+  createGrid();
+  startGame();
+})();
+</script>
+
+</body>
+</html>
